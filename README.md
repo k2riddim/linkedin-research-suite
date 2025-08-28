@@ -58,6 +58,19 @@ linkedin-research-suite/
 
 ### Running the Application
 
+#### Option 1: Unified Server (Recommended)
+```bash
+# Start both backend and frontend together
+npm start
+
+# For development mode
+npm run dev
+
+# For production mode  
+npm run prod
+```
+
+#### Option 2: Manual Startup
 **Backend (from framework/ directory):**
 ```bash
 python src/main.py
@@ -69,6 +82,27 @@ pnpm dev
 ```
 
 The backend will run on `http://localhost:5001` and the frontend on `http://localhost:5173`.
+
+### Service Management
+
+The unified server can be managed as a systemd service:
+
+```bash
+# Install service
+sudo cp linkedin_research.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable linkedin_research
+
+# Control service
+sudo systemctl start linkedin_research
+sudo systemctl stop linkedin_research
+sudo systemctl status linkedin_research
+
+# View logs
+npm run logs
+# or
+sudo journalctl -u linkedin_research -f
+```
 
 ## Features
 

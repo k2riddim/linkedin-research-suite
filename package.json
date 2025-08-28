@@ -1,0 +1,35 @@
+{
+  "name": "linkedin-research-suite",
+  "version": "1.0.0",
+  "description": "Consolidated LinkedIn research platform with automation framework and modern dashboard",
+  "type": "module",
+  "main": "unified-server.js",
+  "scripts": {
+    "start": "node unified-server.js",
+    "dev": "NODE_ENV=development node unified-server.js",
+    "prod": "NODE_ENV=production node unified-server.js",
+    "setup": "npm run setup:backend && npm run setup:frontend",
+    "setup:backend": "cd framework && python -m venv venv && source venv/bin/activate && pip install -r ../requirements.txt",
+    "setup:frontend": "cd dashboard && npm install",
+    "build:frontend": "cd dashboard && npm run build",
+    "logs": "tail -f logs/unified-server.log"
+  },
+  "keywords": [
+    "linkedin",
+    "automation",
+    "research",
+    "dashboard",
+    "python",
+    "react",
+    "unified-server"
+  ],
+  "author": "LinkedIn Research Suite",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k2riddim/linkedin-research-suite.git"
+  }
+}

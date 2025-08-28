@@ -1,0 +1,19 @@
+[Unit]
+Description=Linkedin Research backend + frontend dashbopard
+After=network.target
+
+[Service]
+Type=simple
+User=chorizo
+Group=chorizo
+WorkingDirectory=/home/chorizo/projects/linkedin-research-suite
+Environment="PATH=/home/chorizo/projects/linkedin-research-suite/venv/bin:/usr/bin"
+Environment="NODE_ENV=production"
+EnvironmentFile=/home/chorizo/projects/linkedin-research-suite/.env
+ExecStart=/usr/bin/node unified-server.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
