@@ -1,0 +1,122 @@
+version: '3.8'
+
+# Production Docker Compose for NAS/Portainer
+# Optimized for production deployment with proper resource management
+
+services:
+  linkedin-research-backend:
+    image: linkedin-research-framework:latest
+    container_name: linkedin-research-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-5001}:5000"
+    environment:
+      - FLASK_ENV=production
+      - FLASK_SECRET_KEY=${FLASK_SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///data/linkedin_research.db}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FIVESIM_API_KEY=${FIVESIM_API_KEY}
+      - EMAILONDECK_API_KEY=${EMAILONDECK_API_KEY}
+      - GEONODE_CREDENTIALS=${GEONODE_CREDENTIALS}
+      - POSTGRES_HOST=${POSTGRES_HOST:-}
+      - POSTGRES_IP=${POSTGRES_IP:-}
+      - POSTGRES_DB=${POSTGRES_DB:-}
+      - POSTGRES_USER=${POSTGRES_USER:-}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - SESSION_TIMEOUT=${SESSION_TIMEOUT:-3600}
+      - ENABLE_RATE_LIMITING=${ENABLE_RATE_LIMITING:-true}
+      - MAX_REQUESTS_PER_MINUTE=${MAX_REQUESTS_PER_MINUTE:-60}
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./ssl:/app/ssl
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - linkedin-research-network
+
+  linkedin-research-frontend:
+    image: nginx:alpine
+    container_name: linkedin-research-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_HTTP_PORT:-8080}:80"
+      - "${FRONTEND_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./static:/usr/share/nginx/html
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      linkedin-research-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    networks:
+      - linkedin-research-network
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: linkedin-research-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - ./redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    networks:
+      - linkedin-research-network
+    profiles:
+      - cache
+
+networks:
+  linkedin-research-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: linkedin-research-net
+
+volumes:
+  data:
+    driver: local
+  logs:
+    driver: local
