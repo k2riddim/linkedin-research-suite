@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog.jsx'
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx'
 import LinkedInCreationConsole from './LinkedInCreationConsole.jsx'
+import LiveStreamModal from './LiveStreamModal.jsx'
 import { 
   Plus, 
   Users, 
@@ -37,6 +38,7 @@ const AccountManager = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const [consoleAccountId, setConsoleAccountId] = useState(null)
   const [isConsoleOpen, setIsConsoleOpen] = useState(false)
+  const [liveOpenAccountId, setLiveOpenAccountId] = useState(null)
 
   const [newAccount, setNewAccount] = useState({
     persona_id: '',
@@ -551,6 +553,14 @@ const AccountManager = () => {
                           <Play className="h-3 w-3" />
                         </Button>
                       ) : null}
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setLiveOpenAccountId(account.id)}
+                      >
+                        <Eye className="h-3 w-3" />
+                      </Button>
                       
                       <Button
                         variant="outline"
@@ -649,6 +659,15 @@ const AccountManager = () => {
             />
           </div>
         </div>
+      )}
+
+      {/* Live Stream Modal */}
+      {liveOpenAccountId && (
+        <LiveStreamModal
+          open={!!liveOpenAccountId}
+          onOpenChange={(v) => !v && setLiveOpenAccountId(null)}
+          accountId={liveOpenAccountId}
+        />
       )}
     </div>
   )

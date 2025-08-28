@@ -31,5 +31,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/k2riddim/linkedin-research-suite.git"
+  },
+  "dependencies": {
+    "@browserbasehq/mcp": "^2.0.0",
+    "@browserbasehq/stagehand": "^2.4.4",
+    "express": "^5.1.0"
   }
 }

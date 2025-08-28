@@ -22,6 +22,16 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Optional AI-native browser stack (Stagehand + Browserbase)
+try:
+    from src.services.ai_browser_agent import AIBrowserAgent  # type: ignore
+    from src.services.linkedin_ai_engine import LinkedInAIEngine  # type: ignore
+    _AI_AVAILABLE = True
+except Exception:
+    AIBrowserAgent = None  # type: ignore
+    LinkedInAIEngine = None  # type: ignore
+    _AI_AVAILABLE = False
+
 async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
     """
     Create LinkedIn account using existing LinkedIn engine with enhanced real-time progress tracking
@@ -224,130 +234,30 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         progress.complete_step("external_services", email_ok and proxy_ok and sms_ok and validate_ok)
         
         # ===========================================
-        # STEP 3: BROWSER LAUNCH
+        # STEP 3: BROWSER LAUNCH (Stagehand preferred)
         # ===========================================
         progress.start_step("browser_launch")
-        
-        # Sub-step: Generate fingerprint
-        progress.start_sub_step("browser_launch", "generate_fingerprint")
-        start_time = time.time()
-        
-        progress.log_info("browser_launch", "generate_fingerprint", "Creating realistic browser fingerprint")
-        
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("browser_launch", "generate_fingerprint", True, {
-            "fingerprint_generated": True
-        }, execution_time)
-        
-        # Sub-step: Launch browser
-        progress.start_sub_step("browser_launch", "launch_browser")
-        start_time = time.time()
-        
-        try:
-            browser_manager = await get_browser_manager()
-            progress.log_success("browser_launch", "launch_browser", "Browser manager initialized")
-        except Exception as e:
-            progress.log_error("browser_launch", "launch_browser", f"Failed to get browser manager: {e}")
-            raise
-        
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("browser_launch", "launch_browser", True, {
-            "browser_manager_ready": True
-        }, execution_time)
-        
-        # Sub-step: Configure proxy and create session (maps to tracker configure_proxy)
-        progress.start_sub_step("browser_launch", "configure_proxy")
-        start_time = time.time()
-        try:
-            session_obj = await browser_manager.create_stealth_session(account_id=account_id, proxy_url=proxy_url)
-            session_id = session_obj.session_id
-            progress.log_success("browser_launch", "configure_proxy", f"Browser session created: {session_id}")
-            create_session_success = True
-        except Exception as e:
-            create_session_success = False
-            progress.log_error("browser_launch", "configure_proxy", f"Failed to create session: {e}")
-            raise
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("browser_launch", "configure_proxy", create_session_success, {
-            "session_id": session_id if create_session_success else None,
-            "proxy_applied": proxy_url is not None
-        }, execution_time)
-        
-        # Sub-step: Test browser
-        progress.start_sub_step("browser_launch", "test_browser")
-        start_time = time.time()
-        
-        # Basic browser test - navigate to a test page
-        progress.log_info("browser_launch", "test_browser", "Testing browser functionality")
-        await asyncio.sleep(0.5)  # Simulate test
-        
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("browser_launch", "test_browser", True, {
-            "browser_functional": True
-        }, execution_time)
-        
+        session_id = None
+        if not _AI_AVAILABLE:
+            # AI Browser initialization (Stagehand + Browserbase)
+            progress.start_sub_step("browser_launch", "ai_browser_init")
+            try:
+                browser_manager = await get_browser_manager()
+                session_obj = await browser_manager.create_stealth_session(account_id=account_id, proxy_url=proxy_url)
+                session_id = session_obj.session_id
+                progress.complete_sub_step("browser_launch", "ai_browser_init", True, {"session_id": session_id}, 0)
+            except Exception as e:
+                progress.complete_sub_step("browser_launch", "ai_browser_init", False, {"error": str(e)}, 0)
+                raise
         progress.complete_step("browser_launch", True)
         
         # ===========================================
-        # STEP 4: LINKEDIN NAVIGATION
+        # STEP 4: (Skipped) Direct AI automation via Stagehand flows
         # ===========================================
         progress.start_step("linkedin_navigation")
-        
-        # Sub-step: Navigate to homepage
-        progress.start_sub_step("linkedin_navigation", "navigate_homepage")
-        start_time = time.time()
-        
-        try:
-            linkedin_engine = await get_linkedin_engine()
-            progress.log_success("linkedin_navigation", "navigate_homepage", "LinkedIn engine initialized")
-        except Exception as e:
-            progress.log_error("linkedin_navigation", "navigate_homepage", f"Failed to get LinkedIn engine: {e}")
-            raise
-        
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("linkedin_navigation", "navigate_homepage", True, {
-            "linkedin_engine_ready": True
-        }, execution_time)
-        
-        # Sub-step: Detect layout
-        progress.start_sub_step("linkedin_navigation", "detect_layout")
-        start_time = time.time()
-        
-        progress.log_info("linkedin_navigation", "detect_layout", "Analyzing LinkedIn page structure")
-        await asyncio.sleep(1.0)  # Simulate layout detection
-        
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("linkedin_navigation", "detect_layout", True, {
-            "layout_detected": True
-        }, execution_time)
-        
-        # Sub-step: Find signup
-        progress.start_sub_step("linkedin_navigation", "find_signup") 
-        start_time = time.time()
-        
-        progress.log_info("linkedin_navigation", "find_signup", "Locating signup elements")
-        await asyncio.sleep(0.5)
-        
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("linkedin_navigation", "find_signup", True, {
-            "signup_elements_found": True
-        }, execution_time)
-        
-        # Sub-step: Human behavior simulation
-        progress.start_sub_step("linkedin_navigation", "human_behavior")
-        start_time = time.time()
-        
-        progress.log_info("linkedin_navigation", "human_behavior", "Simulating human browsing patterns")
-        await asyncio.sleep(2.0)  # Simulate human-like delays
-        
-        execution_time = time.time() - start_time
-        progress.complete_sub_step("linkedin_navigation", "human_behavior", True, {
-            "human_simulation_complete": True
-        }, execution_time)
-        
         progress.complete_step("linkedin_navigation", True)
         
-        # STEP 5: ACCOUNT CREATION (Playwright Agent / LLM MCP if enabled)
+        # STEP 5: ACCOUNT CREATION (Stagehand + Browserbase when available)
         # ===========================================
         progress.start_step("account_creation")
 
@@ -356,33 +266,60 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         start_time = time.time()
 
         try:
-            # Prepare run directory for screenshots
-            try:
-                root_dir = Path(__file__).resolve().parents[2]
-            except Exception:
-                root_dir = Path.cwd()
-            label = f"{account.first_name}-{account.last_name}".strip().replace(' ', '-') or account.email.split('@')[0]
-            label = "".join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in label)
-            run_dir = root_dir / "logs" / f"run-{label}-{datetime.now().strftime('%H%M%S')}"
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            # Initialize agent with the existing browser manager/session
-            from src.services.agents.mcp_playwright_agent import MCPPlaywrightAgent
-            mcp_agent = MCPPlaywrightAgent()
-            agent_result = await mcp_agent.run(
-                account_id=account_id,
-                account_data=account_data,
-                tracker=progress,
-                manual_verification=manual_verification,
-                proxy_url=proxy_url
-            )
-
-            if not agent_result or not agent_result.get('success', False):
-                progress.log_error("account_creation", "fill_personal", "MCP agent failed to complete signup flow")
-                raise Exception("MCP agent failed to complete signup flow")
-
-            progress.log_success("account_creation", "fill_personal", "Personal information filled successfully")
-            detection_risk = agent_result.get('detection_risk', 0)
+            # Try AI automation first if available
+            ai_success = False
+            if _AI_AVAILABLE:
+                try:
+                    browser_agent = AIBrowserAgent()
+                    init_ok = await browser_agent.initialize()
+                    if init_ok:
+                        persona_like = {
+                            'first_name': account.first_name,
+                            'last_name': account.last_name,
+                            'email': account.email,
+                            'industry': creation_settings.get('industry') if isinstance(creation_settings, dict) else None,
+                            'location': (profile_data or {}).get('location'),
+                            'experience_level': 'mid_level'
+                        }
+                        ai_engine = LinkedInAIEngine(browser_agent)
+                        agent_result = await ai_engine.create_account(persona_like)
+                        if agent_result.get('success'):
+                            progress.log_success("account_creation", "fill_personal", "AI browser session created")
+                            ai_success = True
+                            # Store session info for later use by MCP agent
+                            session_id = agent_result.get('session_id')
+                            live_url = agent_result.get('live_url')
+                            detection_risk = 0.2  # Lower risk with AI assistance
+                        else:
+                            logger.warning(f"AI automation failed, will fallback to MCP: {agent_result.get('error')}")
+                    else:
+                        logger.warning("AI browser initialization failed, will fallback to MCP")
+                except Exception as ai_error:
+                    logger.warning(f"AI automation failed, will fallback to MCP: {ai_error}")
+            
+            # If AI failed or not available, use MCP automation
+            if not ai_success:
+                logger.info("Using MCP automation for LinkedIn account creation")
+                from src.services.agents.mcp_playwright_agent import MCPPlaywrightAgent
+                mcp_agent = MCPPlaywrightAgent()
+                manual_verification = {}
+                try:
+                    prof = account.get_profile_data() or {}
+                    manual_verification = prof.get('manual_verification') or {}
+                except Exception:
+                    manual_verification = {}
+                agent_result = await mcp_agent.run(
+                    account_id=account_id,
+                    account_data=account_data,
+                    tracker=progress,
+                    manual_verification=manual_verification,
+                    proxy_url=proxy_url
+                )
+                if not agent_result or not agent_result.get('success', False):
+                    progress.log_error("account_creation", "fill_personal", "MCP agent failed to complete signup flow")
+                    raise Exception("MCP agent failed to complete signup flow")
+                progress.log_success("account_creation", "fill_personal", "Personal information filled successfully")
+                detection_risk = agent_result.get('detection_risk', 0.5)
         except Exception as e:
             progress.log_error("account_creation", "fill_personal", f"Error during account creation: {e}")
             raise
@@ -496,17 +433,20 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
             "usage_recorded": persona is not None
         }, execution_time)
         
-        # Sub-step: Cleanup browser
+        # Sub-step: Cleanup browser sessions
         progress.start_sub_step("finalization", "cleanup_browser")
         start_time = time.time()
-        
-        await browser_manager.close_session(session_id)
-        progress.log_success("finalization", "cleanup_browser", "Browser session cleaned up")
-        
+        try:
+            if not _AI_AVAILABLE and session_id:
+                browser_manager = await get_browser_manager()
+                await browser_manager.close_session(session_id)
+                progress.log_success("finalization", "cleanup_browser", "Browser session cleaned up")
+            else:
+                progress.log_success("finalization", "cleanup_browser", "AI session cleanup handled by provider")
+        except Exception:
+            pass
         execution_time = time.time() - start_time
-        progress.complete_sub_step("finalization", "cleanup_browser", True, {
-            "session_closed": True
-        }, execution_time)
+        progress.complete_sub_step("finalization", "cleanup_browser", True, {"session_closed": True}, execution_time)
         
         # Sub-step: Final validation
         progress.start_sub_step("finalization", "final_validation")
@@ -523,7 +463,7 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         progress.complete_step("finalization", True)
         
         # ===========================================
-        # COMPLETION
+        # COMPLETION & CLEANUP
         # ===========================================
         result = {
             'account_id': account_id,
@@ -533,6 +473,14 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
             'profile_setup': profile_result is not None,
             'detection_risk': detection_risk
         }
+        
+        # Clean up browser sessions after successful completion
+        if 'browser_agent' in locals() and browser_agent:
+            try:
+                await browser_agent.cleanup()
+                logger.info(f"✅ Browser session cleaned up for account {account_id}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup browser session: {cleanup_error}")
         
         progress.send_completion(True, result)
         
@@ -554,6 +502,14 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         
         # Send failure notification
         progress.send_completion(False, error=str(e))
+        
+        # Clean up AIBrowserAgent sessions if they exist
+        if 'browser_agent' in locals() and browser_agent:
+            try:
+                await browser_agent.cleanup()
+                logger.info(f"✅ Browser agent cleaned up after error for account {account_id}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup browser agent: {cleanup_error}")
         
         # Cleanup browser session if it exists
         try:

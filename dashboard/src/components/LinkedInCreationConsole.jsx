@@ -13,7 +13,8 @@ import {
   AlertTriangle, 
   Clock,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  Eye
 } from 'lucide-react'
 import io from 'socket.io-client'
 
@@ -30,6 +31,7 @@ const LinkedInCreationConsole = ({ accountId, onClose, onComplete }) => {
   const socketRef = useRef(null)
   const logsEndRef = useRef(null)
   const recentKeysRef = useRef(new Map())
+  const [liveOpen, setLiveOpen] = useState(false)
 
   // Auto-scroll to bottom of logs
   useEffect(() => {
@@ -314,6 +316,14 @@ const LinkedInCreationConsole = ({ accountId, onClose, onComplete }) => {
                 Effacer
               </Button>
               <Button
+                onClick={() => setLiveOpen(true)}
+                variant="outline"
+                size="sm"
+                title="Voir le flux live"
+              >
+                <Eye className="h-4 w-4 mr-2" /> Live
+              </Button>
+              <Button
                 onClick={onClose}
                 variant="outline"
                 size="sm"
@@ -440,8 +450,60 @@ const LinkedInCreationConsole = ({ accountId, onClose, onComplete }) => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Live Stream Modal inline to match console context */}
+      {liveOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] overflow-auto p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="font-semibold">Live Browser Stream</div>
+              <Button variant="outline" size="sm" onClick={() => setLiveOpen(false)}>Fermer</Button>
+            </div>
+            <LiveIframe accountId={accountId} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 export default LinkedInCreationConsole
+
+const LiveIframe = ({ accountId }) => {
+  const [liveUrl, setLiveUrl] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let mounted = true
+    const run = async () => {
+      try {
+        setLoading(true)
+        const res = await fetch(`/api/automation/ai/account/${accountId}/live`)
+        const data = await res.json()
+        if (!mounted) return
+        if (res.ok && data?.live_url) setLiveUrl(data.live_url)
+        else setLiveUrl(null)
+      } catch (e) {
+        if (mounted) setError(e.message)
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    }
+    run()
+    return () => { mounted = false }
+  }, [accountId])
+
+  if (loading) return <div className="text-sm text-slate-600">Chargement...</div>
+  if (error) return <div className="text-sm text-red-600">Erreur: {error}</div>
+  if (!liveUrl) return <div className="text-sm text-slate-600">Aucun flux live disponible pour l'instant.</div>
+
+  return (
+    <iframe
+      src={liveUrl}
+      title="Live Browser"
+      className="w-full h-[70vh] rounded border"
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+    />
+  )
+}

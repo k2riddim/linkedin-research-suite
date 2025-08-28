@@ -187,6 +187,13 @@ class LinkedInEngine:
             # Step 3: Submit registration
             await self.browser_manager.human_click(page, self.selectors['join_button'])
             await self.browser_manager.human_delay(3000, 5000)
+            # If page still not navigated, retry with base join-now link as fallback
+            try:
+                if page.url.endswith('/signup'):
+                    await self.browser_manager.human_click(page, self.selectors.get('join_now_button', 'a[href*="/join"]'))
+                    await self.browser_manager.human_delay(3000, 5000)
+            except Exception:
+                pass
             
             # Step 4: Check for verification requirements
             current_url = page.url

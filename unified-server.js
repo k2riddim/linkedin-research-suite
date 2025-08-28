@@ -18,6 +18,32 @@ import { createWriteStream } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Load environment variables from .env (no external deps)
+function loadEnvFile(filepath) {
+    try {
+        if (!fs.existsSync(filepath)) return;
+        const content = fs.readFileSync(filepath, 'utf8');
+        for (const rawLine of content.split(/\r?\n/)) {
+            const line = rawLine.trim();
+            if (!line || line.startsWith('#')) continue;
+            const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+            if (!match) continue;
+            const key = match[1];
+            let value = match[2];
+            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+                value = value.slice(1, -1);
+            }
+            if (!(key in process.env)) {
+                process.env[key] = value;
+            }
+        }
+    } catch (e) {
+        // best-effort; log later if needed
+    }
+}
+
+loadEnvFile(path.join(__dirname, '.env'));
+
 // Configuration
 const CONFIG = {
     logFile: path.join(__dirname, 'logs', 'unified-server.log'),
@@ -42,6 +68,16 @@ const CONFIG = {
             VITE_API_URL: process.env.VITE_API_URL || 'http://localhost:5001'
         },
         port: 5173
+    },
+    stagehand: {
+        cwd: __dirname,
+        command: 'node',
+        args: ['stagehand-server.js'],
+        env: {
+            ...process.env,
+            STAGEHAND_PORT: '8081'
+        },
+        port: 8081
     }
 };
 
@@ -49,13 +85,15 @@ class UnifiedServer {
     constructor() {
         this.processes = {
             backend: null,
-            frontend: null
+            frontend: null,
+            stagehand: null
         };
         this.logStream = null;
         this.isShuttingDown = false;
         this.restartCounts = {
             backend: 0,
-            frontend: 0
+            frontend: 0,
+            stagehand: 0
         };
         this.maxRestarts = 3;
         this.restartDelay = 5000; // 5 seconds
@@ -91,6 +129,35 @@ class UnifiedServer {
         
         // Also write to console
         console.log(logMessage.trim());
+    }
+
+    logProcessOutput(message, service) {
+        // Parse log level from backend messages (e.g., "2025-08-28 16:16:32,185 - src.services.emailondeck - INFO - Available domains: 5")
+        const logLevelMatch = message.match(/\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b/);
+        let detectedLevel = logLevelMatch ? logLevelMatch[1] : 'INFO';
+        
+        // Convert Python log levels to our format
+        if (detectedLevel === 'CRITICAL') detectedLevel = 'ERROR';
+        if (detectedLevel === 'DEBUG') detectedLevel = 'INFO';  // Show debug as info for clarity
+        
+        // Check if message already has a timestamp (backend logs do)
+        const hasTimestamp = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/.test(message);
+        
+        if (hasTimestamp) {
+            // Backend log with timestamp - don't add our own timestamp, just parse level and add service
+            const logMessage = `[${detectedLevel}] [${service}] ${message}\n`;
+            
+            // Write to log file
+            if (this.logStream) {
+                this.logStream.write(logMessage);
+            }
+            
+            // Also write to console
+            console.log(logMessage.trim());
+        } else {
+            // No timestamp detected - use regular log method (for other processes like npm)
+            this.log(detectedLevel, message, service);
+        }
     }
 
     setupSignalHandlers() {
@@ -161,18 +228,18 @@ class UnifiedServer {
             stdio: ['pipe', 'pipe', 'pipe']
         });
 
-        // Handle process output
+        // Handle process output with smart log level detection
         process.stdout.on('data', (data) => {
             const message = data.toString().trim();
             if (message) {
-                this.log('INFO', message, name.toUpperCase());
+                this.logProcessOutput(message, name.toUpperCase());
             }
         });
 
         process.stderr.on('data', (data) => {
             const message = data.toString().trim();
             if (message) {
-                this.log('ERROR', message, name.toUpperCase());
+                this.logProcessOutput(message, name.toUpperCase());
             }
         });
 
@@ -229,12 +296,41 @@ class UnifiedServer {
     async waitForHealthcheck(name, port, maxAttempts = 30) {
         const checkHealth = () => {
             return new Promise((resolve) => {
-                exec(`curl -f http://localhost:${port}/api/health || curl -f http://localhost:${port}`, 
+                let healthUrl;
+                if (name === 'stagehand') {
+                    healthUrl = `http://localhost:${port}/health`;
+                } else if (name === 'backend') {
+                    healthUrl = `http://localhost:${port}/api/health`;
+                } else {
+                    healthUrl = `http://localhost:${port}`;
+                }
+                
+                exec(`curl -f ${healthUrl}`, 
                      { timeout: 5000 }, 
                      (error) => {
                     resolve(!error);
                 });
             });
+        };
+        
+        // Special handling for Stagehand server - clean up old sessions after health check
+        const cleanupStagehandSessions = async () => {
+            if (name === 'stagehand') {
+                try {
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second after health check
+                    exec(`curl -X POST http://localhost:${port}/sessions/cleanup`, 
+                         { timeout: 10000 }, 
+                         (error, stdout, stderr) => {
+                        if (!error) {
+                            this.log('INFO', 'Cleaned up old Stagehand sessions', 'STAGEHAND');
+                        } else {
+                            this.log('WARNING', `Session cleanup failed: ${stderr}`, 'STAGEHAND');
+                        }
+                    });
+                } catch (e) {
+                    this.log('WARNING', `Session cleanup error: ${e.message}`, 'STAGEHAND');
+                }
+            }
         };
 
         this.log('INFO', `Waiting for ${name} to be healthy on port ${port}...`, name.toUpperCase());
@@ -242,6 +338,10 @@ class UnifiedServer {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             if (await checkHealth()) {
                 this.log('INFO', `${name} is healthy!`, name.toUpperCase());
+                
+                // Clean up old sessions for Stagehand
+                await cleanupStagehandSessions();
+                
                 return true;
             }
             
@@ -260,7 +360,13 @@ class UnifiedServer {
             
             this.log('INFO', 'Starting services...');
             
-            // Start backend first
+            // Start Stagehand server first (required for AI browser automation)
+            this.startProcess('stagehand');
+            
+            // Wait for Stagehand to be healthy
+            await this.waitForHealthcheck('stagehand', CONFIG.stagehand.port);
+            
+            // Start backend
             this.startProcess('backend');
             
             // Wait a bit for backend to start
@@ -276,6 +382,7 @@ class UnifiedServer {
             this.log('INFO', '🚀 LinkedIn Research Suite is running!');
             this.log('INFO', `📊 Dashboard: http://localhost:${CONFIG.frontend.port}`);
             this.log('INFO', `🔧 API: http://localhost:${CONFIG.backend.port}/api`);
+            this.log('INFO', `🤖 Stagehand AI: http://localhost:${CONFIG.stagehand.port}`);
             this.log('INFO', 'Press Ctrl+C to stop the services');
             
         } catch (error) {

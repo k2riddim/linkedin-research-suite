@@ -449,39 +449,95 @@ def start_linkedin_account_creation(account_id):
         db.session.commit()
         logger.info(f"DEBUG: Account status updated and committed")
         
-        # Start async LinkedIn creation process
-        logger.info(f"DEBUG: Starting async LinkedIn creation process")
+        # Start async LinkedIn creation process using AI automation
+        logger.info(f"DEBUG: Starting AI-powered LinkedIn creation process")
 
-        # Run the creation process in a dedicated OS thread with its own event loop
-        import threading
-        from src.main import app as flask_app
+        # Try AI automation first, fall back to legacy if not available
+        try:
+            # Check if AI automation is available
+            from src.routes.automation import AI_AVAILABLE, AIBrowserAgent, LinkedInAIEngine, _ai_sessions, AISession
+            if AI_AVAILABLE:
+                logger.info(f"DEBUG: Using AI automation for account {account_id}")
+                
+                # Run the creation process in a dedicated OS thread with its own event loop
+                import threading
+                from src.main import app as flask_app
 
-        def run_with_context():
-            try:
-                with flask_app.app_context():
-                    logger.info(f"DEBUG: Thread started for account {account_id}")
-                    _active_creation_accounts.add(account_id)
-                    loop = asyncio.new_event_loop()
+                def run_ai_context():
                     try:
-                        asyncio.set_event_loop(loop)
-                        loop.run_until_complete(create_linkedin_account_async(account_id))
-                    finally:
+                        with flask_app.app_context():
+                            logger.info(f"DEBUG: AI thread started for account {account_id}")
+                            _active_creation_accounts.add(account_id)
+                            loop = asyncio.new_event_loop()
+                            try:
+                                asyncio.set_event_loop(loop)
+                                
+                                async def _run_ai():
+                                    # Re-fetch account in this thread context
+                                    current_account = Account.query.get(account_id)
+                                    if not current_account:
+                                        logger.error(f"Account {account_id} not found in AI thread")
+                                        return {"success": False, "error": "Account not found"}
+                                    
+                                    # Use the full linkedin creator service workflow with AI automation
+                                    from src.services.linkedin_creator_service import create_linkedin_account_async
+                                    
+                                    result = await create_linkedin_account_async(account_id)
+                                    
+                                    # Register session for live monitoring
+                                    if _ai_sessions is not None:
+                                        sess_id = result.get('session_id')
+                                        live = result.get('live_url')
+                                        if sess_id:
+                                            _ai_sessions.register(AISession(account_id=account_id, session_id=sess_id, created_at=datetime.utcnow(), live_url=live))
+                                            logger.info(f"Registered AI session {sess_id} for account {account_id} with live URL: {live}")
+                                    
+                                    # Update account status based on result
+                                    if result.get('success'):
+                                        current_account.status = 'linkedin_created'
+                                        current_account.linkedin_created = True
+                                        current_account.linkedin_profile_url = result.get('profile_data', {}).get('profile_url')
+                                        logger.info(f"AI LinkedIn account creation succeeded for {account_id}")
+                                    else:
+                                        current_account.status = 'creation_failed'
+                                        logger.error(f"AI LinkedIn account creation failed for {account_id}: {result.get('error')}")
+                                    
+                                    db.session.commit()
+                                    return result
+                                
+                                loop.run_until_complete(_run_ai())
+                            finally:
+                                try:
+                                    loop.close()
+                                except Exception:
+                                    pass
+                    except Exception as thread_error:
+                        logger.exception(f"AI creation thread failed for {account_id}: {thread_error}")
+                        # Update account status to failed
                         try:
-                            loop.close()
+                            with flask_app.app_context():
+                                account = Account.query.get(account_id)
+                                if account:
+                                    account.status = 'creation_failed'
+                                    db.session.commit()
                         except Exception:
                             pass
-            except Exception as thread_error:
-                logger.exception(f"Background creation thread failed for {account_id}: {thread_error}")
-            finally:
-                try:
-                    _active_creation_accounts.discard(account_id)
-                except Exception:
-                    pass
+                    finally:
+                        try:
+                            _active_creation_accounts.discard(account_id)
+                        except Exception:
+                            pass
 
-        creation_thread = threading.Thread(target=run_with_context, name=f"linkedin-create-{account_id}")
-        creation_thread.daemon = True
-        creation_thread.start()
-        logger.info(f"DEBUG: Thread started successfully")
+                thread = threading.Thread(target=run_ai_context, daemon=True)
+                thread.start()
+                logger.info(f"DEBUG: AI thread started successfully")
+            else:
+                logger.error(f"AI automation is required but not available for account {account_id}")
+                return jsonify({'error': 'AI automation service is not available'}), 503
+                
+        except ImportError as import_error:
+            logger.error(f"AI automation dependencies missing for account {account_id}: {import_error}")
+            return jsonify({'error': 'AI automation dependencies not installed'}), 503
         
         logger.info(f"LinkedIn creation started for account {account_id}")
         

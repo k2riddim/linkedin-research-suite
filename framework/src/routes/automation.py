@@ -6,8 +6,26 @@ from src.services.linkedin_engine import get_linkedin_engine
 from src.services.ai_content import PersonaProfile, DemographicData, ProfessionalData, SkillsData, ContentData, VisualAssets
 from datetime import datetime
 
+# AI-native automation (optional, enabled when deps present)
+try:
+  from src.services.ai_browser_agent import AIBrowserAgent  # type: ignore
+  from src.services.linkedin_ai_engine import LinkedInAIEngine  # type: ignore
+  from src.services.account_warmup_service import AccountWarmupService  # type: ignore
+  from src.services.session_manager import AISessionRegistry, AISession  # type: ignore
+  AI_AVAILABLE = True
+except Exception:
+  AIBrowserAgent = None  # type: ignore
+  LinkedInAIEngine = None  # type: ignore
+  AccountWarmupService = None  # type: ignore
+  AISessionRegistry = None  # type: ignore
+  AISession = None  # type: ignore
+  AI_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 automation_bp = Blueprint('automation', __name__)
+
+# Registry for live AI sessions
+_ai_sessions = AISessionRegistry() if AI_AVAILABLE else None
 
 @automation_bp.route('/automation/browser/session/create', methods=['POST'])
 def create_browser_session():
@@ -453,4 +471,80 @@ def test_automation():
             'automation_services_available': False,
             'error_message': str(e)
         }), 500
+
+
+# ==========================
+# AI-NATIVE AUTOMATION ROUTES
+# ==========================
+
+@automation_bp.route('/automation/ai/account/<account_id>/create', methods=['POST'])
+def ai_create_account(account_id):
+    """Start AI-driven account creation using Stagehand+Browserbase if available."""
+    if not AI_AVAILABLE:
+        return jsonify({'error': 'AI automation not available on this deployment'}), 501
+
+    try:
+        data = request.json or {}
+        persona = data.get('persona') or {}
+
+        async def _run():
+            browser = AIBrowserAgent()
+            engine = LinkedInAIEngine(browser)
+            result = await engine.create_account(persona)
+
+            # Register session for live monitoring even if account creation fails
+            if _ai_sessions is not None:
+                sess_id = result.get('session_id')
+                live = result.get('live_url')
+                if sess_id:
+                    _ai_sessions.register(AISession(account_id=account_id, session_id=sess_id, created_at=datetime.utcnow(), live_url=live))
+                    logger.info(f"Registered AI session {sess_id} for account {account_id} with live URL: {live}")
+            return result
+
+        result = asyncio.run(_run())
+        status = 200 if result.get('success') else 500
+        return jsonify(result), status
+    except Exception as e:
+        logger.error(f"AI create account failed: {e}")
+        return jsonify({'error': 'AI account creation failed'}), 500
+
+
+@automation_bp.route('/automation/ai/account/<account_id>/warmup', methods=['POST'])
+def ai_warmup_account(account_id):
+    """Execute AI-generated warmup plan for an account."""
+    if not AI_AVAILABLE:
+        return jsonify({'error': 'AI automation not available on this deployment'}), 501
+    try:
+        data = request.json or {}
+        persona = data.get('persona') or {}
+
+        async def _run():
+            browser = AIBrowserAgent()
+            warmup = AccountWarmupService(browser)
+            result = await warmup.execute_warmup_plan(persona, account_id)
+            
+            # Register session for live monitoring even if warmup fails
+            if _ai_sessions is not None:
+                sess_id = result.get('session_id')
+                live = result.get('live_url')
+                if sess_id:
+                    _ai_sessions.register(AISession(account_id=account_id, session_id=sess_id, created_at=datetime.utcnow(), live_url=live))
+                    logger.info(f"Registered AI session {sess_id} for account {account_id} with live URL: {live}")
+            return result
+
+        result = asyncio.run(_run())
+        status = 200 if result.get('success') else 500
+        return jsonify(result), status
+    except Exception as e:
+        logger.error(f"AI warmup failed: {e}")
+        return jsonify({'error': 'AI warmup failed'}), 500
+
+
+@automation_bp.route('/automation/ai/account/<account_id>/live', methods=['GET'])
+def ai_account_live(account_id):
+    """Return the live monitoring URL for the current AI browser session if present."""
+    if not AI_AVAILABLE or _ai_sessions is None:
+        return jsonify({'live_url': None, 'available': False})
+    sess = _ai_sessions.by_account(account_id)
+    return jsonify({'live_url': getattr(sess, 'live_url', None), 'available': True})
 

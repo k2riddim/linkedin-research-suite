@@ -189,8 +189,8 @@ class StealthBrowserManager:
             # Step 5: Create page and apply additional stealth
             page = await context.new_page()
             try:
-                await page.set_default_navigation_timeout(60000)
-                await page.set_default_timeout(30000)
+                await page.set_default_navigation_timeout(90000)
+                await page.set_default_timeout(45000)
             except Exception:
                 pass
             await self.apply_page_stealth(page)
@@ -289,8 +289,7 @@ class StealthBrowserManager:
             'sec-fetch-user': '?1'
         })
         
-        # Block heavy images but keep CSS and fonts to avoid breaking layout
-        await page.route("**/*.{png,jpg,jpeg,gif,svg}", lambda route: route.abort())
+        # Do not block images or SVG on initial load to avoid breaking LinkedIn flows
         
         # Add random mouse movements
         await self.add_random_mouse_movements(page)

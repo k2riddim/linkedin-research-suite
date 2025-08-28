@@ -54,8 +54,8 @@ class MCPPlaywrightAgent:
             from src.services.browser_automation import get_browser_manager
             from src.services.linkedin_engine import get_linkedin_engine
             
-            browser_manager = get_browser_manager()
-            linkedin_engine = get_linkedin_engine()
+            browser_manager = await get_browser_manager()
+            linkedin_engine = await get_linkedin_engine()
             
             # Create browser session with proxy if provided
             session_config = {
@@ -64,8 +64,8 @@ class MCPPlaywrightAgent:
                 'timezone': 'Europe/Paris'
             }
             
-            session_id = f"linkedin_creation_{account_id}"
-            session = await browser_manager.create_session(session_id, **session_config)
+            session = await browser_manager.create_stealth_session(account_id=account_id, proxy_url=proxy_url)
+            session_id = session.session_id
             
             if not session:
                 raise Exception("Failed to create browser session")
