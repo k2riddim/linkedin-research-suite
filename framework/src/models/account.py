@@ -46,7 +46,36 @@ class Account(db.Model):
     def __repr__(self):
         return f'<Account {self.email}>'
     
+    def set_profile_data(self, profile_data):
+        """Set profile data for the account"""
+        if isinstance(profile_data, dict):
+            # Store profile data as JSON in creation_logs field
+            if self.creation_logs:
+                try:
+                    existing_logs = json.loads(self.creation_logs)
+                    if isinstance(existing_logs, dict):
+                        existing_logs['profile_data'] = profile_data
+                    else:
+                        existing_logs = {'profile_data': profile_data, 'logs': existing_logs}
+                    self.creation_logs = json.dumps(existing_logs)
+                except (json.JSONDecodeError, TypeError):
+                    self.creation_logs = json.dumps({'profile_data': profile_data})
+        else:
+                self.creation_logs = json.dumps({'profile_data': profile_data})
+    
+    def get_profile_data(self):
+        """Get profile data for the account"""
+        if self.creation_logs:
+            try:
+                logs = json.loads(self.creation_logs)
+                if isinstance(logs, dict):
+                    return logs.get('profile_data', {})
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return {}
+
     def to_dict(self):
+        profile_data = self.get_profile_data()
         return {
             'id': self.id,
             'first_name': self.first_name,
@@ -64,7 +93,8 @@ class Account(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'proxy_used': self.proxy_used,
-            'user_agent': self.user_agent
+            'user_agent': self.user_agent,
+            'profile_data': profile_data
         }
 
 # Placeholder models for Session and Activity - will be implemented properly later
