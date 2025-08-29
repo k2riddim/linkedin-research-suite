@@ -41,7 +41,7 @@ app.post('/sessions/start', async (req, res) => {
             env = 'BROWSERBASE',
             headless = true,
             debugDom = false,
-            modelName = 'gpt-4o'
+            modelName = 'gpt-5'
         } = req.body;
 
         // Extract API keys from headers

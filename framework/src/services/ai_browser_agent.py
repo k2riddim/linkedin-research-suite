@@ -4,6 +4,10 @@ import os
 import random
 from typing import Any, Dict, Optional
 
+from .ai_config import get_ai_config, get_stagehand_client, AIOperationType
+from .session_manager import get_session_manager, SessionStatus
+from .ai_error_handler import get_error_handler
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,30 +38,29 @@ class AIBrowserAgent:
     Exposes a minimal API used by higher-level services.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, account_id: Optional[str] = None):
         self.config = config or {}
+        self.account_id = account_id
         self.session_id: Optional[str] = None
         self.live_url: Optional[str] = None
+        
+        # Initialize managers
+        self.session_manager = get_session_manager()
+        self.error_handler = get_error_handler()
 
     async def initialize(self) -> bool:
-        """Initialize Stagehand session via Node.js server with proper OpenAI API key configuration."""
+        """Initialize Stagehand session via Node.js server with comprehensive API key validation."""
         try:
-
-            api_key = self.config.get('browserbase_api_key') or os.getenv('BROWSERBASE_API_KEY')
-            project_id = self.config.get('browserbase_project_id') or os.getenv('BROWSERBASE_PROJECT_ID')
-            env_name = self.config.get('stagehand_env') or os.getenv('STAGEHAND_ENV', 'BROWSERBASE')
-            headless = str(self.config.get('stagehand_headless') or os.getenv('STAGEHAND_HEADLESS', 'true')).lower() == 'true'
-            debug_dom = str(self.config.get('stagehand_debug_dom') or os.getenv('STAGEHAND_DEBUG_DOM', 'false')).lower() == 'true'
-            # Model config (OpenAI by default)
-            model_api_key = self.config.get('openai_api_key') or os.getenv('OPENAI_API_KEY')
-            model_name = self.config.get('openai_model') or os.getenv('OPENAI_MODEL', 'gpt-4o')
-
-            if not api_key or not project_id:
-                logger.error("Browserbase credentials are missing.")
-                return False
-            if not model_api_key:
-                logger.error("OpenAI model_api_key is missing (set OPENAI_API_KEY).")
-                return False
+            # Use centralized AI configuration
+            ai_config = get_ai_config()
+            stagehand_client = get_stagehand_client()
+            
+            # Get validated session configuration
+            session_config = stagehand_client.get_session_config(AIOperationType.BROWSER_AUTOMATION)
+            headers = stagehand_client.get_session_headers()
+            
+            logger.info("Initializing AI browser session with validated credentials")
+            logger.info(f"Using model: {session_config['modelName']} with optimized settings")
 
             # Check if Stagehand server is available
             server_url = self.config.get('stagehand_server_url') or os.getenv('STAGEHAND_API_URL', 'http://localhost:8081')
@@ -74,34 +77,47 @@ class AIBrowserAgent:
                 logger.error("AIBrowserAgent initialization failed - Stagehand server is required")
                 return False
 
-            # Create session via Node.js server with OpenAI API key in headers
-            session_data = {
-                'env': env_name,
-                'headless': headless,
-                'debugDom': debug_dom,
-                'modelName': model_name
-            }
-            
-            headers = {
-                'x-bb-api-key': api_key,
-                'x-bb-project-id': project_id,
-                'x-model-api-key': model_api_key,
-                'Content-Type': 'application/json'
-            }
+            # Use validated session configuration
 
-            # Check existing sessions and cleanup if needed to prevent rate limiting
+            # AGGRESSIVE cleanup to prevent Browserbase session limit issues
             try:
+                # First, clean up any sessions in our Stagehand server
                 async with aiohttp.ClientSession() as session:
                     async with session.get(f"{server_url}/sessions", timeout=5) as response:
                         if response.status == 200:
                             sessions_data = await response.json()
                             session_count = sessions_data.get('count', 0)
-                            if session_count >= 2:  # Browserbase likely has session limits
+                            if session_count >= 1:  # Clean up ANY existing sessions for single-session Browserbase accounts
                                 logger.info(f"Found {session_count} existing sessions, cleaning up to prevent rate limits...")
                                 async with session.post(f"{server_url}/sessions/cleanup", timeout=10) as cleanup_response:
                                     if cleanup_response.status == 200:
                                         cleanup_result = await cleanup_response.json()
-                                        logger.info(f"Cleanup completed: {cleanup_result.get('message', 'Done')}")
+                                        logger.info(f"Stagehand cleanup completed: {cleanup_result.get('message', 'Done')}")
+                
+                # Also check for orphaned sessions directly in Browserbase
+                bb_api_key = os.getenv('BROWSERBASE_API_KEY')
+                if bb_api_key:
+                    async with aiohttp.ClientSession() as session:
+                        headers = {'x-bb-api-key': bb_api_key}
+                        async with session.get('https://api.browserbase.com/v1/sessions', headers=headers, timeout=10) as response:
+                            if response.status == 200:
+                                bb_sessions = await response.json()
+                                if isinstance(bb_sessions, dict) and 'data' in bb_sessions:
+                                    active_sessions = [s for s in bb_sessions['data'] if s.get('status') in ['RUNNING', 'STARTING']]
+                                    if active_sessions:
+                                        logger.info(f"Found {len(active_sessions)} active Browserbase sessions, terminating them...")
+                                        for bb_session in active_sessions:
+                                            try:
+                                                session_id = bb_session.get('id')
+                                                async with session.delete(f'https://api.browserbase.com/v1/sessions/{session_id}', headers=headers, timeout=5) as del_response:
+                                                    if del_response.status == 200:
+                                                        logger.info(f"Terminated Browserbase session: {session_id}")
+                                            except Exception as del_error:
+                                                logger.warning(f"Failed to terminate Browserbase session: {del_error}")
+                
+                # Wait a moment for cleanup to complete
+                await asyncio.sleep(2.0)
+                
             except Exception as cleanup_error:
                 logger.warning(f"Session cleanup failed, proceeding anyway: {cleanup_error}")
             
@@ -117,27 +133,48 @@ class AIBrowserAgent:
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
                             f"{server_url}/sessions/start", 
-                            json=session_data,
+                            json=session_config,
                             headers=headers,
-                            timeout=30
+                            timeout=session_config.get('timeout', 30000) // 1000  # Convert from ms to seconds
                         ) as response:
                             if response.status == 200:
                                 result = await response.json()
                                 if result.get('success'):
-                                    self.session_id = result.get('sessionId')
-                                    self.live_url = result.get('liveUrl')
+                                    # Extract from data object (stagehand-server format)
+                                    data = result.get('data', {})
+                                    browserbase_session_id = data.get('sessionId')
+                                    live_url = data.get('liveUrl')
                                     
-                                    # Store configuration for later use
-                                    self.config.update({
-                                        'browserbase_api_key': api_key,
-                                        'browserbase_project_id': project_id,
-                                        'openai_api_key': model_api_key,
-                                        'openai_model': model_name,
-                                        'stagehand_server_url': server_url
-                                    })
-                                    
-                                    logger.info("AI Browser Agent initialized via Node.js server. session_id=%s live=%s", self.session_id, self.live_url)
-                                    return True
+                                    if browserbase_session_id and live_url:
+                                        # Create session in session manager
+                                        managed_session_id = self.session_manager.create_session(
+                                            account_id=self.account_id,
+                                            operation_type=AIOperationType.BROWSER_AUTOMATION,
+                                            browserbase_session_id=browserbase_session_id,
+                                            live_url=live_url,
+                                            stagehand_server_url=server_url
+                                        )
+                                        
+                                        # Set session as active
+                                        self.session_manager.set_session_status(managed_session_id, SessionStatus.ACTIVE)
+                                        
+                                        # Store session details
+                                        self.session_id = managed_session_id
+                                        self.live_url = live_url
+                                        
+                                        # Store configuration for later use
+                                        self.config.update({
+                                            'ai_config_manager': ai_config,
+                                            'stagehand_client': stagehand_client,
+                                            'stagehand_server_url': server_url,
+                                            'operation_type': AIOperationType.BROWSER_AUTOMATION,
+                                            'browserbase_session_id': browserbase_session_id
+                                        })
+                                        
+                                        logger.info("AI Browser Agent initialized. session_id=%s live=%s", self.session_id, self.live_url)
+                                        return True
+                                    else:
+                                        raise Exception("Invalid session response - missing session ID or live URL")
                                 else:
                                     raise Exception(f"Session creation failed: {result.get('error', 'Unknown error')}")
                             else:
@@ -147,30 +184,41 @@ class AIBrowserAgent:
                 except Exception as init_error:
                     error_msg = str(init_error)
                     
-                    # Check for rate limiting (429) or server errors (5xx)
-                    if ("429" in error_msg or "rate limit" in error_msg.lower() or 
-                        "500" in error_msg or "502" in error_msg or "503" in error_msg or
-                        "too many requests" in error_msg.lower()):
+                    # Use error handler for classification and recovery strategy
+                    error_info = self.error_handler.handle_error(
+                        error_msg,
+                        context={
+                            'attempt': attempt + 1,
+                            'max_retries': max_retries,
+                            'operation': 'session_initialization',
+                            'server_url': server_url
+                        },
+                        account_id=self.account_id,
+                        operation_type='browser_automation'
+                    )
+                    
+                    # Check if retry is recommended
+                    if (error_info['classification']['retry_recommended'] and 
+                        attempt < max_retries - 1):
                         
-                        if attempt < max_retries - 1:
-                            # For 429 errors, use longer waits with exponential backoff
-                            if "429" in error_msg:
-                                base_wait = 30 + (attempt * 30)  # 30s, 60s, 90s for 429 errors
-                            else:
-                                base_wait = retry_delay * (2 ** attempt)
-                            
-                            jitter = random.uniform(0.8, 1.2)
-                            wait_time = base_wait * jitter
-                            logger.warning(f"Rate limited or server error (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time:.1f}s: {error_msg}")
-                            
-                            await asyncio.sleep(wait_time)
-                            continue
-                        else:
-                            logger.error(f"Failed to initialize after {max_retries} attempts due to rate limiting: {error_msg}")
-                            return False
+                        # Use recommended retry delay
+                        wait_time = error_info['classification']['retry_delay']
+                        if error_info['error_type'] == 'rate_limit_exceeded':
+                            # Special handling for rate limits
+                            wait_time = 30 + (attempt * 30)  # 30s, 60s, 90s
+                        
+                        # Add jitter
+                        jitter = random.uniform(0.8, 1.2)
+                        final_wait = wait_time * jitter
+                        
+                        logger.warning(f"Retrying session initialization (attempt {attempt + 1}/{max_retries}) "
+                                     f"in {final_wait:.1f}s. Error: {error_info['error_type']}")
+                        
+                        await asyncio.sleep(final_wait)
+                        continue
                     else:
-                        # Non-retryable error
-                        logger.error(f"AIBrowserAgent initialization failed: {error_msg}")
+                        # Non-retryable error or max retries reached
+                        logger.error(f"Failed to initialize after {max_retries} attempts: {error_info['error_type']}")
                         return False
             
             return False
@@ -274,23 +322,34 @@ class AIBrowserAgent:
         return self.live_url
 
     async def cleanup(self) -> None:
-        """Clean up Browserbase session via Stagehand server."""
+        """Clean up Browserbase session via Stagehand server and session manager."""
         try:
             if self.session_id:
-                logger.info(f"Cleaning up Browserbase session: {self.session_id}")
+                logger.info(f"Cleaning up AI browser session: {self.session_id}")
                 
-                # Send explicit close request to Stagehand server
-                try:
-                    import aiohttp
-                    server_url = self.config.get('stagehand_server_url') or os.getenv('STAGEHAND_API_URL', 'http://localhost:8081')
-                    async with aiohttp.ClientSession() as session:
-                        async with session.delete(f"{server_url}/sessions/{self.session_id}", timeout=5) as response:
-                            if response.status == 200:
-                                logger.info(f"✅ Browserbase session {self.session_id} closed successfully")
-                            else:
-                                logger.warning(f"Server cleanup returned status {response.status}")
-                except Exception as e:
-                    logger.warning(f"Could not confirm server-side cleanup for session {self.session_id}: {e}")
+                # Get session details before cleanup
+                session_meta = self.session_manager.get_session(self.session_id)
+                browserbase_session_id = None
+                
+                if session_meta:
+                    browserbase_session_id = session_meta.browserbase_session_id
+                    
+                    # Mark session for cleanup in session manager
+                    self.session_manager.close_session(self.session_id)
+                
+                # Send explicit close request to Stagehand server if we have browserbase session ID
+                if browserbase_session_id:
+                    try:
+                        import aiohttp
+                        server_url = self.config.get('stagehand_server_url') or os.getenv('STAGEHAND_API_URL', 'http://localhost:8081')
+                        async with aiohttp.ClientSession() as session:
+                            async with session.delete(f"{server_url}/sessions/{browserbase_session_id}", timeout=5) as response:
+                                if response.status == 200:
+                                    logger.info(f"✅ Browserbase session {browserbase_session_id} closed successfully")
+                                else:
+                                    logger.warning(f"Server cleanup returned status {response.status}")
+                    except Exception as e:
+                        logger.warning(f"Could not confirm server-side cleanup for session {browserbase_session_id}: {e}")
                 
                 # Reset session state
                 self.session_id = None
@@ -298,6 +357,13 @@ class AIBrowserAgent:
                 
         except Exception as e:
             logger.error(f"Error during AIBrowserAgent cleanup: {e}")
+            # Use error handler
+            self.error_handler.handle_error(
+                str(e),
+                context={'operation': 'session_cleanup'},
+                account_id=self.account_id,
+                operation_type='browser_automation'
+            )
         
     def __del__(self):
         """Ensure cleanup is called when object is destroyed."""

@@ -17,16 +17,20 @@ class LinkedInAIEngine:
 
     async def create_account(self, persona: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            # Initialize browser for AI-assisted automation
-            logger.info("Initializing AI browser automation...")
-            if not await self.browser.initialize():
-                return {"success": False, "error": "AIBrowserAgent unavailable"}
+            # Check if browser is already initialized to avoid double session creation
+            if self.browser.session_id is None:
+                # Initialize browser for AI-assisted automation
+                logger.info("Initializing AI browser automation...")
+                if not await self.browser.initialize():
+                    return {"success": False, "error": "AIBrowserAgent unavailable"}
+            else:
+                logger.info(f"Using existing AI browser session: {self.browser.session_id}")
             
             # Check if session was created successfully
             if self.browser.session_id is None:
                 return {"success": False, "error": "Browser session not available - automation disabled"}
             
-            logger.info(f"AI browser session created: {self.browser.session_id}")
+            logger.info(f"AI browser session ready: {self.browser.session_id}")
             
             # Return session info for external automation to use
             return {

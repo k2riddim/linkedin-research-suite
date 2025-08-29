@@ -11,9 +11,56 @@ try:
   from src.services.ai_browser_agent import AIBrowserAgent  # type: ignore
   from src.services.linkedin_ai_engine import LinkedInAIEngine  # type: ignore
   from src.services.account_warmup_service import AccountWarmupService  # type: ignore
-  from src.services.session_manager import AISessionRegistry, AISession  # type: ignore
+  from src.services.session_manager import get_session_manager, SessionMetadata  # type: ignore
+  
+  # Create compatibility classes for AISession
+  class AISession:
+      def __init__(self, account_id: str, session_id: str, created_at: datetime, live_url: str = None):
+          self.account_id = account_id
+          self.session_id = session_id
+          self.created_at = created_at
+          self.live_url = live_url
+  
+  class AISessionRegistry:
+      def __init__(self):
+          self.session_manager = get_session_manager()
+      
+      def register(self, ai_session: AISession):
+          """Register an AI session using the new session manager."""
+          # This is now handled by SessionManager.create_session in AIBrowserAgent
+          pass
+      
+      def get_session(self, account_id: str):
+          """Get session by account ID."""
+          session_meta = self.session_manager.get_session_by_account(account_id)
+          if session_meta:
+              return AISession(
+                  account_id=session_meta.account_id,
+                  session_id=session_meta.session_id,
+                  created_at=session_meta.created_at,
+                  live_url=session_meta.live_url
+              )
+          return None
+      
+      def by_account(self, account_id: str):
+          """Get session by account ID (alias for compatibility)."""
+          return self.get_session(account_id)
+      
+      def get_all_sessions(self):
+          """Get all active sessions."""
+          active_sessions = self.session_manager.get_active_sessions()
+          return [
+              AISession(
+                  account_id=session.account_id,
+                  session_id=session.session_id,
+                  created_at=session.created_at,
+                  live_url=session.live_url
+              )
+              for session in active_sessions
+          ]
+  
   AI_AVAILABLE = True
-except Exception:
+except Exception as e:
   AIBrowserAgent = None  # type: ignore
   LinkedInAIEngine = None  # type: ignore
   AccountWarmupService = None  # type: ignore

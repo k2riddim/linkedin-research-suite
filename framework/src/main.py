@@ -35,6 +35,7 @@ from src.routes.service import service_bp
 from src.routes.ai import ai_bp
 from src.routes.automation import automation_bp
 from src.routes.analytics import analytics_bp
+from src.routes.ai_debug import ai_debug_bp
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 
@@ -105,6 +106,7 @@ app.register_blueprint(service_bp, url_prefix='/api')
 app.register_blueprint(ai_bp, url_prefix='/api')
 app.register_blueprint(automation_bp, url_prefix='/api')
 app.register_blueprint(analytics_bp, url_prefix='/api')
+app.register_blueprint(ai_debug_bp)  # Already includes /api/ai/debug prefix
 
 # Initialize database
 db.init_app(app)
@@ -285,6 +287,45 @@ def handle_get_account_status(data):
         logger.error(f"Error getting account status: {e}")
         emit('error', {'message': 'Failed to get account status'})
 
+# AI Services Initialization
+def _initialize_ai_services():
+    """Initialize AI monitoring and management services."""
+    try:
+        # Import AI services
+        from src.services.ai_config import get_ai_config
+        from src.services.session_manager import get_session_manager
+        from src.services.ai_error_handler import get_error_handler
+        from src.services.ai_health_monitor import get_health_monitor
+        
+        # Initialize services
+        ai_config = get_ai_config()
+        session_manager = get_session_manager()
+        error_handler = get_error_handler()
+        health_monitor = get_health_monitor()
+        
+        logger.info("AI services initialized successfully")
+        logger.info(f"✓ AI Config: GPT-5 model configured")
+        logger.info(f"✓ Session Manager: Ready for session tracking")
+        logger.info(f"✓ Error Handler: Comprehensive error classification active")
+        logger.info(f"✓ Health Monitor: Service monitoring initialized")
+        
+        # Start health monitoring in background
+        def _start_health_monitoring():
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(health_monitor.start_monitoring())
+                logger.info("AI health monitoring started")
+            except Exception as e:
+                logger.warning(f"Could not start AI health monitoring: {e}")
+        
+        socketio.start_background_task(_start_health_monitoring)
+        
+    except Exception as e:
+        logger.warning(f"AI services initialization failed: {e}")
+        logger.info("Application will continue without AI monitoring")
+
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
@@ -319,6 +360,8 @@ if __name__ == '__main__':
         def _post_start():
             try:
                 _ensure_drainers_started()
+                # Initialize AI monitoring services
+                _initialize_ai_services()
             finally:
                 try:
                     socketio.sleep(0)

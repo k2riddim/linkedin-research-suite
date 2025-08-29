@@ -37,6 +37,7 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
     Create LinkedIn account using existing LinkedIn engine with enhanced real-time progress tracking
     """
     progress = EnhancedProgressTracker(account_id)
+    browser_agent = None  # Initialize for cleanup in error handling
     
     try:
         # ===========================================
@@ -266,11 +267,17 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         start_time = time.time()
 
         try:
-            # Try AI automation first if available
+            # Initialize defaults
             ai_success = False
+            session_id = None
+            live_url = None
+            detection_risk = 0.5  # Default risk level
+            browser_agent = None
+            
+            # Try AI automation first if available
             if _AI_AVAILABLE:
                 try:
-                    browser_agent = AIBrowserAgent()
+                    browser_agent = AIBrowserAgent(account_id=account_id)
                     init_ok = await browser_agent.initialize()
                     if init_ok:
                         persona_like = {
@@ -284,22 +291,55 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
                         ai_engine = LinkedInAIEngine(browser_agent)
                         agent_result = await ai_engine.create_account(persona_like)
                         if agent_result.get('success'):
-                            progress.log_success("account_creation", "fill_personal", "AI browser session created")
+                            progress.log_success("account_creation", "fill_personal", "AI browser session created successfully")
                             ai_success = True
-                            # Store session info for later use by MCP agent
                             session_id = agent_result.get('session_id')
                             live_url = agent_result.get('live_url')
                             detection_risk = 0.2  # Lower risk with AI assistance
+                            
+                            # AI session created successfully - now use MCP with the AI session
+                            logger.info(f"AI session created: {session_id}, passing to MCP for automation")
+                            from src.services.agents.mcp_playwright_agent import MCPPlaywrightAgent
+                            mcp_agent = MCPPlaywrightAgent()
+                            manual_verification = {}
+                            try:
+                                prof = account.get_profile_data() or {}
+                                manual_verification = prof.get('manual_verification') or {}
+                            except Exception:
+                                manual_verification = {}
+                            
+                            # Pass AI session details to MCP
+                            agent_result = await mcp_agent.run(
+                                account_id=account_id,
+                                account_data=account_data,
+                                tracker=progress,
+                                manual_verification=manual_verification,
+                                proxy_url=proxy_url,
+                                ai_session_id=session_id,  # Pass AI session to MCP
+                                ai_live_url=live_url
+                            )
                         else:
-                            logger.warning(f"AI automation failed, will fallback to MCP: {agent_result.get('error')}")
+                            logger.warning(f"AI session creation failed, will use MCP with new session: {agent_result.get('error')}")
+                            # Clean up failed AI agent
+                            if browser_agent:
+                                await browser_agent.cleanup()
                     else:
-                        logger.warning("AI browser initialization failed, will fallback to MCP")
+                        logger.warning("AI browser initialization failed, will use MCP with new session")
+                        # Clean up failed AI agent
+                        if browser_agent:
+                            await browser_agent.cleanup()
                 except Exception as ai_error:
-                    logger.warning(f"AI automation failed, will fallback to MCP: {ai_error}")
+                    logger.warning(f"AI automation failed, will use MCP with new session: {ai_error}")
+                    # Clean up failed AI agent
+                    if browser_agent:
+                        try:
+                            await browser_agent.cleanup()
+                        except Exception:
+                            pass
             
-            # If AI failed or not available, use MCP automation
+            # If AI session creation failed or not available, use MCP with its own session
             if not ai_success:
-                logger.info("Using MCP automation for LinkedIn account creation")
+                logger.info("Using MCP automation with new browser session")
                 from src.services.agents.mcp_playwright_agent import MCPPlaywrightAgent
                 mcp_agent = MCPPlaywrightAgent()
                 manual_verification = {}
@@ -475,12 +515,12 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         }
         
         # Clean up browser sessions after successful completion
-        if 'browser_agent' in locals() and browser_agent:
+        if browser_agent:
             try:
                 await browser_agent.cleanup()
-                logger.info(f"✅ Browser session cleaned up for account {account_id}")
+                logger.info(f"✅ Browser agent cleaned up after successful completion for account {account_id}")
             except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup browser session: {cleanup_error}")
+                logger.warning(f"Failed to cleanup browser agent: {cleanup_error}")
         
         progress.send_completion(True, result)
         
@@ -504,7 +544,7 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         progress.send_completion(False, error=str(e))
         
         # Clean up AIBrowserAgent sessions if they exist
-        if 'browser_agent' in locals() and browser_agent:
+        if browser_agent:
             try:
                 await browser_agent.cleanup()
                 logger.info(f"✅ Browser agent cleaned up after error for account {account_id}")

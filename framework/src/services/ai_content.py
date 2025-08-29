@@ -108,7 +108,7 @@ class AIContentGenerator:
         self.client = openai.OpenAI(
             api_key=config.external_services.openai_api_key
         )
-        self.model = "gpt-4"  # Use GPT-4 for better quality
+        self.model = "gpt-5"  # Use GPT-5 for enhanced quality
         
     def optimize_openai_parameters(self, content_type: str, experience_level: ExperienceLevel) -> Dict[str, Any]:
         """Optimize OpenAI parameters based on content type and experience"""
@@ -457,7 +457,7 @@ class PersonaGenerator:
         try:
             response = await self.content_generator.generate_with_retry(
                 prompt,
-                {"model": "gpt-4", "temperature": 0.7, "max_tokens": 800},
+                {"model": "gpt-5", "temperature": 0.3, "max_tokens": 800, "timeout": 60},
                 max_retries=3
             )
             
@@ -513,7 +513,7 @@ class PersonaGenerator:
         try:
             response = await self.content_generator.generate_with_retry(
                 prompt,
-                {"model": "gpt-4", "temperature": 0.6, "max_tokens": 500},
+                {"model": "gpt-5", "temperature": 0.2, "max_tokens": 500, "timeout": 60},
                 max_retries=3
             )
             

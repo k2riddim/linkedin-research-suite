@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createWriteStream } from 'fs';
+import fetch from 'node-fetch';
 
 // ES module setup
 const __filename = fileURLToPath(import.meta.url);
@@ -293,6 +294,23 @@ class UnifiedServer {
         this.processes[name] = this.spawnProcess(name, config);
     }
 
+    async cleanupStagehandSessions() {
+        try {
+            const response = await fetch('http://localhost:8081/sessions/cleanup', {
+                method: 'POST',
+                timeout: 10000
+            });
+            if (response.ok) {
+                const result = await response.json();
+                this.log('INFO', `Stagehand session cleanup: ${result.message || 'completed'}`, 'STAGEHAND');
+            } else {
+                this.log('WARNING', `Stagehand cleanup returned status ${response.status}`, 'STAGEHAND');
+            }
+        } catch (error) {
+            this.log('WARNING', `Stagehand session cleanup failed: ${error.message}`, 'STAGEHAND');
+        }
+    }
+
     async waitForHealthcheck(name, port, maxAttempts = 30) {
         const checkHealth = () => {
             return new Promise((resolve) => {
@@ -365,6 +383,9 @@ class UnifiedServer {
             
             // Wait for Stagehand to be healthy
             await this.waitForHealthcheck('stagehand', CONFIG.stagehand.port);
+            
+            // Clean up any old sessions to prevent rate limiting
+            await this.cleanupStagehandSessions();
             
             // Start backend
             this.startProcess('backend');

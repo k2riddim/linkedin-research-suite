@@ -22,7 +22,7 @@ class MCPPlaywrightAgent:
     """
 
     def __init__(self, model: str = None):
-        self.model = model or os.getenv("OPENAI_MCP_MODEL", "gpt-4o")
+        self.model = model or os.getenv("OPENAI_MCP_MODEL", "gpt-5")
         self._client = None
         try:
             # Import OpenAI client
