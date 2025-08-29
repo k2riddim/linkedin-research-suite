@@ -235,30 +235,29 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         progress.complete_step("external_services", email_ok and proxy_ok and sms_ok and validate_ok)
         
         # ===========================================
-        # STEP 3: BROWSER LAUNCH (Stagehand preferred)
+        # STEP 3: BROWSER LAUNCH
         # ===========================================
         progress.start_step("browser_launch")
-        session_id = None
-        if not _AI_AVAILABLE:
-            # AI Browser initialization (Stagehand + Browserbase)
-            progress.start_sub_step("browser_launch", "ai_browser_init")
-            try:
-                browser_manager = await get_browser_manager()
-                session_obj = await browser_manager.create_stealth_session(account_id=account_id, proxy_url=proxy_url)
-                session_id = session_obj.session_id
-                progress.complete_sub_step("browser_launch", "ai_browser_init", True, {"session_id": session_id}, 0)
-            except Exception as e:
-                progress.complete_sub_step("browser_launch", "ai_browser_init", False, {"error": str(e)}, 0)
-                raise
+
+        # AI Browser initialization (Skyvern)
+        progress.start_sub_step("browser_launch", "ai_browser_init")
+        try:
+            browser_agent = AIBrowserAgent(account_id=account_id)
+            init_ok = await browser_agent.initialize()
+            if not init_ok:
+                raise Exception("Failed to initialize AI Browser Agent")
+
+            session_id = browser_agent.session_id
+            live_url = browser_agent.live_url
+            progress.complete_sub_step("browser_launch", "ai_browser_init", True, {"session_id": session_id, "live_url": live_url}, 0)
+        except Exception as e:
+            progress.complete_sub_step("browser_launch", "ai_browser_init", False, {"error": str(e)}, 0)
+            raise
+
         progress.complete_step("browser_launch", True)
         
         # ===========================================
-        # STEP 4: (Skipped) Direct AI automation via Stagehand flows
-        # ===========================================
-        progress.start_step("linkedin_navigation")
-        progress.complete_step("linkedin_navigation", True)
-        
-        # STEP 5: ACCOUNT CREATION (Stagehand + Browserbase when available)
+        # STEP 4: ACCOUNT CREATION
         # ===========================================
         progress.start_step("account_creation")
 
@@ -267,99 +266,23 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         start_time = time.time()
 
         try:
-            # Initialize defaults
-            ai_success = False
-            session_id = None
-            live_url = None
-            detection_risk = 0.5  # Default risk level
-            browser_agent = None
+            persona_like = {
+                'first_name': account.first_name,
+                'last_name': account.last_name,
+                'email': account.email,
+                'industry': creation_settings.get('industry') if isinstance(creation_settings, dict) else None,
+                'location': (profile_data or {}).get('location'),
+                'experience_level': 'mid_level'
+            }
+            ai_engine = LinkedInAIEngine(browser_agent)
+            agent_result = await ai_engine.create_account(persona_like)
             
-            # Try AI automation first if available
-            if _AI_AVAILABLE:
-                try:
-                    browser_agent = AIBrowserAgent(account_id=account_id)
-                    init_ok = await browser_agent.initialize()
-                    if init_ok:
-                        persona_like = {
-                            'first_name': account.first_name,
-                            'last_name': account.last_name,
-                            'email': account.email,
-                            'industry': creation_settings.get('industry') if isinstance(creation_settings, dict) else None,
-                            'location': (profile_data or {}).get('location'),
-                            'experience_level': 'mid_level'
-                        }
-                        ai_engine = LinkedInAIEngine(browser_agent)
-                        agent_result = await ai_engine.create_account(persona_like)
-                        if agent_result.get('success'):
-                            progress.log_success("account_creation", "fill_personal", "AI browser session created successfully")
-                            ai_success = True
-                            session_id = agent_result.get('session_id')
-                            live_url = agent_result.get('live_url')
-                            detection_risk = 0.2  # Lower risk with AI assistance
-                            
-                            # AI session created successfully - now use MCP with the AI session
-                            logger.info(f"AI session created: {session_id}, passing to MCP for automation")
-                            from src.services.agents.mcp_playwright_agent import MCPPlaywrightAgent
-                            mcp_agent = MCPPlaywrightAgent()
-                            manual_verification = {}
-                            try:
-                                prof = account.get_profile_data() or {}
-                                manual_verification = prof.get('manual_verification') or {}
-                            except Exception:
-                                manual_verification = {}
-                            
-                            # Pass AI session details to MCP
-                            agent_result = await mcp_agent.run(
-                                account_id=account_id,
-                                account_data=account_data,
-                                tracker=progress,
-                                manual_verification=manual_verification,
-                                proxy_url=proxy_url,
-                                ai_session_id=session_id,  # Pass AI session to MCP
-                                ai_live_url=live_url
-                            )
-                        else:
-                            logger.warning(f"AI session creation failed, will use MCP with new session: {agent_result.get('error')}")
-                            # Clean up failed AI agent
-                            if browser_agent:
-                                await browser_agent.cleanup()
-                    else:
-                        logger.warning("AI browser initialization failed, will use MCP with new session")
-                        # Clean up failed AI agent
-                        if browser_agent:
-                            await browser_agent.cleanup()
-                except Exception as ai_error:
-                    logger.warning(f"AI automation failed, will use MCP with new session: {ai_error}")
-                    # Clean up failed AI agent
-                    if browser_agent:
-                        try:
-                            await browser_agent.cleanup()
-                        except Exception:
-                            pass
-            
-            # If AI session creation failed or not available, use MCP with its own session
-            if not ai_success:
-                logger.info("Using MCP automation with new browser session")
-                from src.services.agents.mcp_playwright_agent import MCPPlaywrightAgent
-                mcp_agent = MCPPlaywrightAgent()
-                manual_verification = {}
-                try:
-                    prof = account.get_profile_data() or {}
-                    manual_verification = prof.get('manual_verification') or {}
-                except Exception:
-                    manual_verification = {}
-                agent_result = await mcp_agent.run(
-                    account_id=account_id,
-                    account_data=account_data,
-                    tracker=progress,
-                    manual_verification=manual_verification,
-                    proxy_url=proxy_url
-                )
-                if not agent_result or not agent_result.get('success', False):
-                    progress.log_error("account_creation", "fill_personal", "MCP agent failed to complete signup flow")
-                    raise Exception("MCP agent failed to complete signup flow")
-                progress.log_success("account_creation", "fill_personal", "Personal information filled successfully")
-                detection_risk = agent_result.get('detection_risk', 0.5)
+            if not agent_result.get('success'):
+                raise Exception(f"AI engine failed to create account: {agent_result.get('error')}")
+
+            progress.log_success("account_creation", "fill_personal", "AI browser session created successfully")
+            detection_risk = 0.2  # Lower risk with AI assistance
+
         except Exception as e:
             progress.log_error("account_creation", "fill_personal", f"Error during account creation: {e}")
             raise
@@ -367,7 +290,7 @@ async def create_linkedin_account_async(account_id: str) -> Dict[str, Any]:
         execution_time = time.time() - start_time
         progress.complete_sub_step("account_creation", "fill_personal", True, {
             "form_filled": True,
-            "detection_risk": detection_risk if 'detection_risk' in locals() else 0
+            "detection_risk": detection_risk
         }, execution_time)
 
         # Mark remaining sub-steps as placeholders (will be expanded by agent as needed)

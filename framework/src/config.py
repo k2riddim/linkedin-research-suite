@@ -7,9 +7,9 @@ class ExternalServiceConfig:
     """Configuration for external services"""
     fivesim_api_key: Optional[str] = None
     emailondeck_api_key: Optional[str] = None
-    geonode_username: Optional[str] = None
-    geonode_password: Optional[str] = None
     openai_api_key: Optional[str] = None
+    skyvern_api_key: Optional[str] = None
+    skyvern_workspace_id: Optional[str] = None
 
 @dataclass
 class DatabaseConfig:
@@ -44,9 +44,9 @@ class Config:
         self.external_services = ExternalServiceConfig(
             fivesim_api_key=os.getenv('FIVESIM_API_KEY'),
             emailondeck_api_key=os.getenv('EMAILONDECK_API_KEY'),
-            geonode_username=os.getenv('GEONODE_USERNAME'),
-            geonode_password=os.getenv('GEONODE_PASSWORD'),
-            openai_api_key=os.getenv('OPENAI_API_KEY')
+            openai_api_key=os.getenv('OPENAI_API_KEY'),
+            skyvern_api_key=os.getenv('SKYVERN_API_KEY'),
+            skyvern_workspace_id=os.getenv('SKYVERN_WORKSPACE_ID')
         )
         
         # Database configuration with PostgreSQL support
@@ -122,8 +122,8 @@ class Config:
             'external_services': {
                 'fivesim_configured': bool(self.external_services.fivesim_api_key),
                 'emailondeck_configured': bool(self.external_services.emailondeck_api_key),
-                'geonode_configured': bool(self.external_services.geonode_username and self.external_services.geonode_password),
-                'openai_configured': bool(self.external_services.openai_api_key)
+                'openai_configured': bool(self.external_services.openai_api_key),
+                'skyvern_configured': bool(self.external_services.skyvern_api_key and self.external_services.skyvern_workspace_id)
             }
         }
 

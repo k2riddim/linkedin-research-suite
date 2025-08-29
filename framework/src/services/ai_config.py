@@ -193,115 +193,72 @@ class AIConfigManager:
 # Global instance
 ai_config = AIConfigManager()
 
-
-class StagehandClient:
-    """Enhanced Stagehand client with comprehensive API key validation."""
+class SkyvernClient:
+    """Client for interacting with the Skyvern API."""
     
-    def __init__(self, server_url: str = "http://localhost:8081"):
-        self.server_url = server_url
+    def __init__(self, api_url: str = "https://api.skyvern.com/v1"):
+        self.api_url = api_url
         self.ai_config = ai_config
         self._validate_initialization()
-    
+
     def _validate_initialization(self):
-        """Validate all required configurations for Stagehand operations."""
+        """Validate all required configurations for Skyvern operations."""
+        self.api_key = os.getenv('SKYVERN_API_KEY')
+        self.workspace_id = os.getenv('SKYVERN_WORKSPACE_ID')
+
+        if not self.api_key:
+            logger.error("SKYVERN_API_KEY environment variable is missing")
+            raise ValueError("SKYVERN_API_KEY is required for Skyvern operations")
         
-        # Validate OpenAI API key
-        if not self.ai_config.api_key:
-            raise ValueError("OpenAI API key not configured - cannot initialize Stagehand client")
-        
-        # Validate Browserbase credentials with enhanced error handling and fallback loading
-        bb_api_key = os.getenv('BROWSERBASE_API_KEY')
-        bb_project_id = os.getenv('BROWSERBASE_PROJECT_ID')
-        
-        # If environment variables are missing, try to reload from .env file
-        if not bb_api_key or not bb_project_id:
-            logger.warning("Browserbase environment variables missing, attempting to reload .env file")
-            
-            # Try to find and reload .env file
-            from dotenv import load_dotenv
-            possible_env_paths = [
-                os.path.join(os.getcwd(), '.env'),
-                os.path.join(os.path.dirname(os.getcwd()), '.env'),
-                os.path.join(os.path.dirname(os.path.dirname(os.getcwd())), '.env'),
-                '/home/chorizo/projects/linkedin-research-suite/.env'  # Absolute fallback
-            ]
-            
-            for env_path in possible_env_paths:
-                if os.path.exists(env_path):
-                    logger.info(f"Found .env file at: {env_path}")
-                    load_dotenv(env_path, override=True)
-                    bb_api_key = os.getenv('BROWSERBASE_API_KEY')
-                    bb_project_id = os.getenv('BROWSERBASE_PROJECT_ID')
-                    if bb_api_key and bb_project_id:
-                        logger.info("Successfully reloaded Browserbase credentials from .env file")
-                        break
-                    else:
-                        logger.warning(f"Loaded .env from {env_path} but variables still missing")
-        
-        # Enhanced debugging for missing environment variables
-        if not bb_api_key:
-            logger.error("BROWSERBASE_API_KEY environment variable is missing")
-            logger.error(f"Current working directory: {os.getcwd()}")
-            logger.error(f"Available env vars starting with BROWSERBASE: {[k for k in os.environ.keys() if k.startswith('BROWSERBASE')]}")
-            raise ValueError("BROWSERBASE_API_KEY environment variable is required")
-        if not bb_project_id:
-            logger.error("BROWSERBASE_PROJECT_ID environment variable is missing")
-            logger.error(f"Current working directory: {os.getcwd()}")
-            logger.error(f"Available env vars starting with BROWSERBASE: {[k for k in os.environ.keys() if k.startswith('BROWSERBASE')]}")
-            raise ValueError("BROWSERBASE_PROJECT_ID environment variable is required")
-        
-        # Store credentials for reuse to avoid repeated os.getenv calls
-        self._bb_api_key = bb_api_key
-        self._bb_project_id = bb_project_id
-        
-        # Log successful validation
-        logger.info("StagehandClient initialized with validated credentials")
-        logger.info(f"Server URL: {self.server_url}")
-        logger.info(f"OpenAI API key: {'***' + self.ai_config.api_key[-8:]}")
-        logger.info(f"Browserbase project: {bb_project_id}")
-    
-    def get_session_headers(self) -> Dict[str, str]:
-        """Get properly formatted headers for session creation."""
-        # Use stored credentials that were validated during initialization
-        bb_api_key = self._bb_api_key
-        bb_project_id = self._bb_project_id
-        
-        # Debug logging
-        logger.info(f"StagehandClient headers - API key: {'***' + bb_api_key[-8:] if bb_api_key else 'None'}")
-        logger.info(f"StagehandClient headers - Project ID: {bb_project_id}")
-        
-        headers = {
-            'x-bb-api-key': bb_api_key,
-            'x-bb-project-id': bb_project_id,
-            'x-model-api-key': self.ai_config.api_key,
+        if not self.workspace_id:
+            logger.error("SKYVERN_WORKSPACE_ID environment variable is missing")
+            raise ValueError("SKYVERN_WORKSPACE_ID is required for Skyvern operations")
+
+        logger.info("SkyvernClient initialized with validated credentials")
+        logger.info(f"Skyvern API URL: {self.api_url}")
+        logger.info(f"Skyvern Workspace ID: {self.workspace_id}")
+
+    def get_headers(self) -> Dict[str, str]:
+        """Get headers for Skyvern API requests."""
+        return {
+            'x-api-key': self.api_key,
             'Content-Type': 'application/json'
         }
-        
-        # Log final headers (sanitized)
-        sanitized_headers = {k: ('***' + v[-8:] if k.endswith('api-key') and v else v) for k, v in headers.items()}
-        logger.info(f"Final headers for Stagehand: {sanitized_headers}")
-        
-        return headers
-    
-    def get_session_config(self, operation_type: AIOperationType = AIOperationType.BROWSER_AUTOMATION) -> Dict[str, Any]:
-        """Get session configuration optimized for specific operation type."""
-        config = self.ai_config.get_config(operation_type)
-        
-        return {
-            'env': 'BROWSERBASE',
-            'headless': True,
-            'debugDom': False,
-            'modelName': config.model,
-            'timeout': config.timeout * 1000,  # Convert to milliseconds
-            'retryAttempts': config.retry_attempts
-        }
 
+    async def create_browser_session(self, timeout: int = 60) -> Dict[str, Any]:
+        """Create a new browser session."""
+        import aiohttp
+        url = f"{self.api_url}/browser_sessions"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=self.get_headers(), json={'timeout': timeout}) as response:
+                response.raise_for_status()
+                return await response.json()
+
+    async def run_task(self, browser_session_id: str, prompt: str) -> Dict[str, Any]:
+        """Run a task in a browser session."""
+        import aiohttp
+        url = f"{self.api_url}/run/tasks"
+        payload = {
+            'prompt': prompt,
+            'browser_session_id': browser_session_id
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=self.get_headers(), json=payload) as response:
+                response.raise_for_status()
+                return await response.json()
+
+    async def close_browser_session(self, browser_session_id: str) -> None:
+        """Close a browser session."""
+        import aiohttp
+        url = f"{self.api_url}/browser_sessions/{browser_session_id}/close"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=self.get_headers()) as response:
+                response.raise_for_status()
 
 def get_ai_config() -> AIConfigManager:
     """Get the global AI configuration manager instance."""
     return ai_config
 
-
-def get_stagehand_client() -> StagehandClient:
-    """Get a validated Stagehand client instance."""
-    return StagehandClient()
+def get_skyvern_client() -> SkyvernClient:
+    """Get a validated Skyvern client instance."""
+    return SkyvernClient()

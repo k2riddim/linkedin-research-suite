@@ -14,7 +14,7 @@ from enum import Enum
 import weakref
 import uuid
 
-from .ai_config import AIOperationType, get_ai_config
+from .ai_config import AIOperationType, get_skyvern_client
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,7 @@ class SessionMetadata:
     error_count: int = 0
     last_error: Optional[str] = None
     total_operations: int = 0
-    browserbase_session_id: Optional[str] = None
-    stagehand_server_url: str = "http://localhost:8081"
+    skyvern_session_id: Optional[str] = None
     tags: Set[str] = field(default_factory=set)
     
     def update_activity(self):
@@ -77,7 +76,7 @@ class SessionManager:
         self._account_sessions: Dict[str, str] = {}  # account_id -> session_id mapping
         self._lock = threading.RLock()
         self._cleanup_task: Optional[asyncio.Task] = None
-        self._ai_config = get_ai_config()
+        self._skyvern_client = get_skyvern_client()
         self._stats = {
             'total_created': 0,
             'total_expired': 0,
@@ -112,35 +111,47 @@ class SessionManager:
             except Exception as e:
                 logger.error(f"Error in background cleanup: {e}")
     
-    def create_session(self, account_id: Optional[str] = None, operation_type: AIOperationType = AIOperationType.BROWSER_AUTOMATION, **metadata) -> str:
+    async def create_session(self, account_id: Optional[str] = None, operation_type: AIOperationType = AIOperationType.BROWSER_AUTOMATION, **metadata) -> str:
         """Create a new session with thread-safe tracking."""
         with self._lock:
             session_id = str(uuid.uuid4())
-            
+
             # Close existing session for account if any
             if account_id and account_id in self._account_sessions:
                 old_session_id = self._account_sessions[account_id]
                 logger.info(f"Closing existing session {old_session_id} for account {account_id}")
                 self._mark_for_cleanup(old_session_id)
-            
+
+        # Create Skyvern session
+        try:
+            browser_session = await self._skyvern_client.create_browser_session()
+            skyvern_session_id = browser_session['browser_session_id']
+            live_url = browser_session.get('app_url')
+        except Exception as e:
+            logger.error(f"Failed to create Skyvern session: {e}")
+            raise
+
+        with self._lock:
             # Create session metadata
             session_meta = SessionMetadata(
                 session_id=session_id,
                 account_id=account_id,
                 operation_type=operation_type,
+                skyvern_session_id=skyvern_session_id,
+                live_url=live_url,
                 **metadata
             )
-            
+
             # Store session
             self._sessions[session_id] = session_meta
             if account_id:
                 self._account_sessions[account_id] = session_id
-            
+
             # Update statistics
             self._stats['total_created'] += 1
             self._stats['active_sessions'] = len([s for s in self._sessions.values() if s.status not in [SessionStatus.EXPIRED, SessionStatus.CLEANUP]])
-            
-            logger.info(f"Created session {session_id} for account {account_id}")
+
+            logger.info(f"Created session {session_id} (Skyvern: {skyvern_session_id}) for account {account_id}")
             return session_id
     
     def get_session(self, session_id: str) -> Optional[SessionMetadata]:
@@ -262,6 +273,14 @@ class SessionManager:
             for session_id in expired_sessions:
                 session = self._sessions.pop(session_id, None)
                 if session:
+                    # Close Skyvern session
+                    if session.skyvern_session_id:
+                        try:
+                            await self._skyvern_client.close_browser_session(browser_session_id=session.skyvern_session_id)
+                            logger.info(f"Closed Skyvern session {session.skyvern_session_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to close Skyvern session {session.skyvern_session_id}: {e}")
+
                     # Remove from account mapping
                     if session.account_id and session.account_id in self._account_sessions:
                         if self._account_sessions[session.account_id] == session_id:
@@ -271,7 +290,7 @@ class SessionManager:
                         'session_id': session_id,
                         'account_id': session.account_id,
                         'live_url': session.live_url,
-                        'browserbase_session_id': session.browserbase_session_id
+                        'skyvern_session_id': session.skyvern_session_id
                     })
             
             # Update statistics

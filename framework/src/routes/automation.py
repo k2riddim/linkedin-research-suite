@@ -1,7 +1,6 @@
 from flask import Blueprint, jsonify, request
 import asyncio
 import logging
-from src.services.browser_automation import browser_manager
 from src.services.linkedin_engine import get_linkedin_engine
 from src.services.ai_content import PersonaProfile, DemographicData, ProfessionalData, SkillsData, ContentData, VisualAssets
 from datetime import datetime
@@ -73,105 +72,6 @@ automation_bp = Blueprint('automation', __name__)
 
 # Registry for live AI sessions
 _ai_sessions = AISessionRegistry() if AI_AVAILABLE else None
-
-@automation_bp.route('/automation/browser/session/create', methods=['POST'])
-def create_browser_session():
-    """Create a new browser session"""
-    try:
-        data = request.json or {}
-        account_id = data.get('account_id')
-        proxy_url = data.get('proxy_url')
-        
-        if not account_id:
-            return jsonify({'error': 'account_id is required'}), 400
-        
-        async def _create_session():
-            session = await browser_manager.create_stealth_session(account_id, proxy_url)
-            return {
-                'session_id': session.session_id,
-                'account_id': session.account_id,
-                'created_at': session.created_at.isoformat(),
-                'fingerprint': {
-                    'user_agent': session.fingerprint.user_agent,
-                    'viewport': session.fingerprint.viewport,
-                    'timezone': session.fingerprint.timezone,
-                    'locale': session.fingerprint.locale
-                }
-            }
-        
-        result = asyncio.run(_create_session())
-        logger.info(f"Created browser session {result['session_id']} for account {account_id}")
-        
-        return jsonify(result), 201
-        
-    except Exception as e:
-        logger.error(f"Error creating browser session: {e}")
-        return jsonify({'error': 'Failed to create browser session'}), 500
-
-@automation_bp.route('/automation/browser/session/<session_id>', methods=['DELETE'])
-def close_browser_session(session_id):
-    """Close a browser session"""
-    try:
-        async def _close_session():
-            await browser_manager.close_session(session_id)
-            return True
-        
-        success = asyncio.run(_close_session())
-        
-        if success:
-            logger.info(f"Closed browser session {session_id}")
-            return jsonify({'message': 'Session closed successfully'})
-        else:
-            return jsonify({'error': 'Session not found'}), 404
-        
-    except Exception as e:
-        logger.error(f"Error closing browser session: {e}")
-        return jsonify({'error': 'Failed to close browser session'}), 500
-
-@automation_bp.route('/automation/browser/sessions', methods=['GET'])
-def list_browser_sessions():
-    """List active browser sessions"""
-    try:
-        sessions = []
-        for session_id, session in browser_manager.active_sessions.items():
-            sessions.append({
-                'session_id': session_id,
-                'account_id': session.account_id,
-                'created_at': session.created_at.isoformat(),
-                'user_agent': session.fingerprint.user_agent,
-                'viewport': session.fingerprint.viewport
-            })
-        
-        return jsonify({
-            'active_sessions': len(sessions),
-            'sessions': sessions
-        })
-        
-    except Exception as e:
-        logger.error(f"Error listing browser sessions: {e}")
-        return jsonify({'error': 'Failed to list browser sessions'}), 500
-
-@automation_bp.route('/automation/browser/cleanup', methods=['POST'])
-def cleanup_browser_sessions():
-    """Cleanup old browser sessions"""
-    try:
-        data = request.json or {}
-        max_age_hours = data.get('max_age_hours', 4)
-        
-        async def _cleanup():
-            await browser_manager.cleanup_old_sessions(max_age_hours)
-            return len(browser_manager.active_sessions)
-        
-        remaining_sessions = asyncio.run(_cleanup())
-        
-        return jsonify({
-            'message': 'Cleanup completed',
-            'remaining_sessions': remaining_sessions
-        })
-        
-    except Exception as e:
-        logger.error(f"Error cleaning up browser sessions: {e}")
-        return jsonify({'error': 'Failed to cleanup browser sessions'}), 500
 
 @automation_bp.route('/automation/linkedin/account/create', methods=['POST'])
 def create_linkedin_account():
@@ -526,7 +426,7 @@ def test_automation():
 
 @automation_bp.route('/automation/ai/account/<account_id>/create', methods=['POST'])
 def ai_create_account(account_id):
-    """Start AI-driven account creation using Stagehand+Browserbase if available."""
+    """Start AI-driven account creation using Skyvern if available."""
     if not AI_AVAILABLE:
         return jsonify({'error': 'AI automation not available on this deployment'}), 501
 
@@ -535,17 +435,23 @@ def ai_create_account(account_id):
         persona = data.get('persona') or {}
 
         async def _run():
-            browser = AIBrowserAgent()
+            browser = AIBrowserAgent(account_id=account_id)
+            initialized = await browser.initialize()
+            if not initialized:
+                return {'success': False, 'error': 'Failed to initialize browser agent'}
+
             engine = LinkedInAIEngine(browser)
             result = await engine.create_account(persona)
 
             # Register session for live monitoring even if account creation fails
-            if _ai_sessions is not None:
-                sess_id = result.get('session_id')
-                live = result.get('live_url')
-                if sess_id:
-                    _ai_sessions.register(AISession(account_id=account_id, session_id=sess_id, created_at=datetime.utcnow(), live_url=live))
-                    logger.info(f"Registered AI session {sess_id} for account {account_id} with live URL: {live}")
+            if _ai_sessions is not None and browser.session_id:
+                _ai_sessions.register(AISession(
+                    account_id=account_id,
+                    session_id=browser.session_id,
+                    created_at=datetime.utcnow(),
+                    live_url=browser.live_url
+                ))
+                logger.info(f"Registered AI session {browser.session_id} for account {account_id} with live URL: {browser.live_url}")
             return result
 
         result = asyncio.run(_run())
@@ -566,17 +472,23 @@ def ai_warmup_account(account_id):
         persona = data.get('persona') or {}
 
         async def _run():
-            browser = AIBrowserAgent()
+            browser = AIBrowserAgent(account_id=account_id)
+            initialized = await browser.initialize()
+            if not initialized:
+                return {'success': False, 'error': 'Failed to initialize browser agent'}
+
             warmup = AccountWarmupService(browser)
             result = await warmup.execute_warmup_plan(persona, account_id)
             
             # Register session for live monitoring even if warmup fails
-            if _ai_sessions is not None:
-                sess_id = result.get('session_id')
-                live = result.get('live_url')
-                if sess_id:
-                    _ai_sessions.register(AISession(account_id=account_id, session_id=sess_id, created_at=datetime.utcnow(), live_url=live))
-                    logger.info(f"Registered AI session {sess_id} for account {account_id} with live URL: {live}")
+            if _ai_sessions is not None and browser.session_id:
+                _ai_sessions.register(AISession(
+                    account_id=account_id,
+                    session_id=browser.session_id,
+                    created_at=datetime.utcnow(),
+                    live_url=browser.live_url
+                ))
+                logger.info(f"Registered AI session {browser.session_id} for account {account_id} with live URL: {browser.live_url}")
             return result
 
         result = asyncio.run(_run())

@@ -33,27 +33,26 @@ class AccountWarmupService:
         if not await self.browser.navigate_to_linkedin():
             return {"success": False, "error": "Navigation failed"}
 
-        page = getattr(self.browser.stagehand, 'page', None)
-        if page is None:
-            return {"success": False, "error": "No page handle"}
-
         results: list[Dict[str, Any]] = []
         for activity in plan:
             try:
                 atype = activity.get('activity_type')
                 target = activity.get('target') or ''
+                prompt = ""
                 if atype == 'search':
-                    await page.act(f"Use the search box and search for '{target}'")
+                    prompt = f"Use the search box and search for '{target}'"
                 elif atype == 'like':
-                    await page.act(f"Find posts about '{target}' and like 2 items")
+                    prompt = f"Find posts about '{target}' and like 2 items"
                 elif atype == 'view':
-                    await page.act(f"View 3 profiles related to '{target}'")
+                    prompt = f"View 3 profiles related to '{target}'"
                 elif atype == 'follow':
-                    await page.act(f"Follow two companies related to '{target}'")
+                    prompt = f"Follow two companies related to '{target}'"
                 elif atype == 'comment':
-                    await page.act(f"Comment something neutral and professional on a post about '{target}'")
+                    prompt = f"Comment something neutral and professional on a post about '{target}'"
                 else:
-                    await page.act("Perform a benign browsing action")
+                    prompt = "Perform a benign browsing action"
+
+                await self.browser.run_task(prompt)
 
                 await asyncio.sleep(random.uniform(1.0, 3.0))
                 results.append({"activity": activity, "success": True, "timestamp": datetime.utcnow().isoformat()})
